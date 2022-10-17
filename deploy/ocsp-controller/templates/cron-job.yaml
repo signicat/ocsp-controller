@@ -6,13 +6,18 @@ metadata:
   labels:
     app: ocsp-poc
 spec:
-  schedule: {{ .Values.schedule }}
+  schedule: {{ .Values.schedule | quote }}
   jobTemplate:
     spec:
       template:
-        serviceAccountName: ocsp-response-updater-sa
         spec:
+          serviceAccountName: ocsp-response-updater-sa
           containers:
           - name: ocsp-updater-job
-            image: ocsp-controller
+            image: {{ .Values.image | quote }}
+            {{- if .Values.dryRun.enabled }}
+            env:
+              - name: DRY_RUN
+                value: "true"
+            {{- end }}
           restartPolicy: Never
