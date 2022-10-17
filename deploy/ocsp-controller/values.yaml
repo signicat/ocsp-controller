@@ -1,0 +1,2 @@
+schedule: "0 */8 * * *"
+image: ocsp-controller:latest

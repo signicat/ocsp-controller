@@ -1,0 +1,18 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  namespace: default
+  name: ocsp-response-update
+  labels:
+    app: ocsp-poc
+spec:
+  schedule: {{ .Values.schedule }}
+  jobTemplate:
+    spec:
+      template:
+        serviceAccountName: ocsp-response-updater-sa
+        spec:
+          containers:
+          - name: ocsp-updater-job
+            image: ocsp-controller
+          restartPolicy: Never

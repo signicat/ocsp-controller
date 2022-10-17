@@ -1,0 +1,17 @@
+# git history files
+.history_rewritten_*
+# Intellij
+*.iml
+.idea/
+.run/
+# Visual Studio Code
+.vscode/
+*.code-workspace
+# vi swap files
+*.swp
+# vi backups
+*.bak
+# common backups
+*~
+# Go compiled tests
+*.test

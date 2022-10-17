@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ocsp-controller
+description: PoC for fetching OCSP response and attaching it to K8s secrets
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
