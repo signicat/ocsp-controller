@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ocsp-manager
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: self-signer
+  namespace: ocsp-manager
+spec:
+  selfSigned: { }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ocsp-manager-certificate-secret
+  namespace: ocsp-manager
+spec:
+  secretName: ocsp-manager-certificate-secret
+  issuerRef:
+    name: "self-signer"
+  dnsNames:
+    - ocsp-manager
+    - ocsp-manager.ocsp-manager
+    - ocsp-manager.ocsp-manager.svc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: ocsp-manager
+  name: ocsp-manager
+  namespace: ocsp-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: ocsp-manager
+  template: # Pod template
+    metadata:
+      labels:
+        run: ocsp-manager
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: ocsp-response-updater-sa
+      containers:
+        - name: ocsp-manager
+          image: reccaflames/ocsp-manager:0.1.0
+          imagePullPolicy: Always
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 250m
+              memory: 128Mi
+          #         Below part is new
+          volumeMounts:
+            - name: ocsp-manager-tls
+              mountPath: /etc/ocsp-manager
+              readOnly: true
+          command:
+            - "/app/ocsp-controller"
+            - "--ca-file=/etc/ocsp-manager/ca.crt"
+            - "--tls-cert-file=/etc/ocsp-manager/tls.crt"
+            - "--tls-private-key-file=/etc/ocsp-manager/tls.key"
+      volumes:
+        - name: ocsp-manager-tls
+          secret:
+            secretName: ocsp-manager-certificate-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ocsp-manager
+  namespace: ocsp-manager
+spec:
+  type: ClusterIP
+  selector:
+    run: ocsp-manager
+  ports:
+    - port: 443
+      targetPort: 8443
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: ocsp-webhook-config
+  annotations:
+    cert-manager.io/inject-ca-from: ocsp-manager/ocsp-manager-certificate-secret
+webhooks:
+  - name: ocsp-manager.ocsp-manager.svc.cluster.local
+    clientConfig:
+      service:
+        name: ocsp-manager
+        namespace: ocsp-manager
+        path: "/mutate"
+        port: 443
+    rules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+        resources:
+          - secrets
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    sideEffects: None
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: istio-system
+  name: ocsp-response-updater
+  labels:
+    app: ocsp-poc
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update", "list"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: ocsp-manager
+  name: ocsp-response-updater-sa
+  labels:
+    app: ocsp-poc
+imagePullSecrets:
+  - name: gitlab-registry-credentials
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: istio-system
+  name: ocsp-response-updater-rb
+  labels:
+    app: ocsp-poc
+subjects:
+  - kind: ServiceAccount
+    name: ocsp-response-updater-sa
+    namespace: ocsp-manager
+    apiGroup: ""
+roleRef:
+  kind: Role
+  name: ocsp-response-updater
+  apiGroup: rbac.authorization.k8s.io
+---
