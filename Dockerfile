@@ -1,9 +1,10 @@
-FROM golang:1.19-alpine3.16 AS build
+FROM --platform=linux/amd64 golang:1.21-alpine3.19 AS build
 WORKDIR /app
 COPY . .
 RUN go build -o ocsp_controller
 
-FROM alpine:3.16
+FROM --platform=linux/amd64 alpine:3.19
 WORKDIR /app
 COPY --from=build /app/ocsp_controller ocsp-controller
 ENTRYPOINT [ "/app/ocsp-controller" ]
+EXPOSE 8443
