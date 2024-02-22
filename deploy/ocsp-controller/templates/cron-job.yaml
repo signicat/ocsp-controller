@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  namespace: default
+  name: ocsp-response-update
+  labels:
+    app: ocsp-poc
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: ocsp-response-updater-sa
+          containers:
+          - name: ocsp-updater-job
+            image: {{ .Values.image | quote }}
+            {{- if .Values.dryRun.enabled }}
+            env:
+              - name: DRY_RUN
+                value: "true"
+            {{- end }}
+          restartPolicy: Never
