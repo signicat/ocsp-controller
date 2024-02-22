@@ -1,6 +1,0 @@
-schedule: "0 */8 * * *"
-
-image: registry.gitlab.com/signicat/cloudops/ocsp-controller/ocsp-controller:latest
-
-dryRun:
-  enabled: true
