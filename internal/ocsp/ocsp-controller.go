@@ -25,6 +25,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+var hashAlgorithms = []crypto.Hash{
+	crypto.SHA1,
+	crypto.SHA256,
+	crypto.SHA384,
+	crypto.SHA512,
+}
+
 func setupClient() *kubernetes.Clientset {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	_, outsideCluster := os.LookupEnv("OUTSIDE_CLUSTER")
@@ -60,7 +67,7 @@ func setupClient() *kubernetes.Clientset {
 }
 
 func getSecrets(client *kubernetes.Clientset, namespace string) *v1.SecretList {
-	listOptions := metav1.ListOptions{FieldSelector: "type=kubernetes.io/tls"}
+	listOptions := metav1.ListOptions{FieldSelector: "type=kubernetes.io/tls", LabelSelector: "controller.cert-manager.io/fao"}
 	secrets, err := client.CoreV1().Secrets(namespace).List(context.Background(), listOptions)
 	if err != nil {
 		log.Fatal(err)
@@ -100,16 +107,9 @@ func getCertificates(pem []byte) ([]*x509.Certificate, []error) {
 	return certs, errs
 }
 
-func getOCSPResponse(c *x509.Certificate, i *x509.Certificate) (bool, *ocsp.Response) {
+func sendOCSPRequest(c *x509.Certificate, i *x509.Certificate, hash crypto.Hash, ocspServer string) (bool, *ocsp.Response) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	logger.Info(fmt.Sprintf(`Handling OCSP Response for certificate %v`, c.SerialNumber))
-	if len(c.OCSPServer) < 1 {
-		logger.Info(fmt.Sprintf("Certificate with Serial Number: %s is missing OCSP Server", c.SerialNumber))
-		return false, nil
-	}
-	ocspServer := c.OCSPServer[0] // TODO: on failure retry on other URLs
-
-	payload, err := ocsp.CreateRequest(c, i, &ocsp.RequestOptions{Hash: crypto.SHA1})
+	payload, err := ocsp.CreateRequest(c, i, &ocsp.RequestOptions{Hash: hash})
 	if err != nil {
 		logger.Error("failed to create ocsp request", "error", err.Error())
 		return false, nil
@@ -117,6 +117,7 @@ func getOCSPResponse(c *x509.Certificate, i *x509.Certificate) (bool, *ocsp.Resp
 
 	httpRequest, _ := http.NewRequest(http.MethodPost, ocspServer, bytes.NewBuffer(payload))
 
+	// Parse URL
 	ocspUrl, err := url.Parse(ocspServer)
 	if err != nil {
 		logger.Error("failed parsing ocsp url", "error", err.Error())
@@ -127,7 +128,7 @@ func getOCSPResponse(c *x509.Certificate, i *x509.Certificate) (bool, *ocsp.Resp
 	httpRequest.Header.Add(accept, ocspResponseType)
 	httpRequest.Header.Add(host, ocspUrl.Host)
 	httpClient := &http.Client{}
-	httpResponse, err := httpClient.Do(httpRequest) // TODO: on failure retry with different hash algorithm and header combo
+	httpResponse, err := httpClient.Do(httpRequest)
 	if err != nil {
 		message := fmt.Sprintf("failed to get ocsp request from %s", ocspServer)
 		logger.Error(message, "error", err.Error())
@@ -135,20 +136,61 @@ func getOCSPResponse(c *x509.Certificate, i *x509.Certificate) (bool, *ocsp.Resp
 	}
 	defer httpResponse.Body.Close()
 
-	output, err := io.ReadAll(httpResponse.Body)
+	ocspResponse, err := parseOCSPResponse(httpResponse.Body, i)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("OCSP Response Parsing Error", "error", err.Error())
 		return false, nil
+	}
+
+	logger.Info(fmt.Sprintf(`Received OCSP response status %v`, ocspResponse.Status))
+
+	return true, ocspResponse
+}
+
+func parseOCSPResponse(body io.Reader, i *x509.Certificate) (*ocsp.Response, error) {
+	output, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
 	}
 
 	ocspResponse, err := ocsp.ParseResponse(output, i)
 	if err != nil {
-		logger.Info(`OCSP Response Parsing Error`)
-		logger.Error(err.Error())
-		return false, nil
+		return nil, err
 	}
 
-	logger.Info(fmt.Sprintf(`OCSP response status %v`, ocspResponse.Status))
+	return ocspResponse, nil
+}
+
+func getOCSPResponse(c *x509.Certificate, i *x509.Certificate) (bool, *ocsp.Response) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger.Info(fmt.Sprintf(`Handling OCSP Response for certificate %v`, c.SerialNumber))
+	if len(c.OCSPServer) < 1 {
+		logger.Info(fmt.Sprintf("Certificate with Serial Number: %s is missing OCSP Server", c.SerialNumber))
+		return false, nil
+	}
+	ocspServer := c.OCSPServer[0] // TODO: on failure retry on other URLs
+
+	var ocspResponse *ocsp.Response
+
+	for _, hashAlgorithm := range hashAlgorithms {
+		res, response := sendOCSPRequest(c, i, hashAlgorithm, ocspServer)
+
+		if res == false {
+			continue
+		}
+
+		if response.Status == 0 {
+			logger.Info(fmt.Sprintf("OCSP request successful with hash algorithm: %v", hashAlgorithm))
+			ocspResponse = response
+			break
+		} else {
+			logger.Error(fmt.Sprintf("OCSP request failed with hash algorithm: %v", hashAlgorithm))
+		}
+	}
+
+	if ocspResponse == nil {
+		return false, nil
+	}
 
 	return true, ocspResponse
 }
@@ -295,7 +337,6 @@ const (
 	ISTIO_NAMESPACE  = "istio-system"
 	CERT_TLS         = "tls.crt"
 	CERT_CA          = "ca.crt"
-	DRY_RUN          = "DRY_RUN"
 	OCSP_STAPLE_KEY  = "tls.oscp-staple"
 	contentType      = "Content-Type"
 	ocspRequestType  = "application/ocsp-request"
