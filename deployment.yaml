@@ -109,6 +109,9 @@ webhooks:
       - v1
       - v1beta1
     sideEffects: None
+    matchConditions:
+      - expression: '("controller.cert-manager.io/fao" in object.metadata.labels)'
+        name: 'select-cert-manager-secrets'
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
