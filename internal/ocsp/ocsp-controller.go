@@ -337,7 +337,7 @@ const (
 	ISTIO_NAMESPACE  = "istio-system"
 	CERT_TLS         = "tls.crt"
 	CERT_CA          = "ca.crt"
-	OCSP_STAPLE_KEY  = "tls.oscp-staple"
+	OCSP_STAPLE_KEY  = "tls.ocsp-staple"
 	contentType      = "Content-Type"
 	ocspRequestType  = "application/ocsp-request"
 	ocspResponseType = "application/ocsp-response"

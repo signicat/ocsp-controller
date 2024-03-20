@@ -46,7 +46,7 @@ spec:
       serviceAccountName: ocsp-response-updater-sa
       containers:
         - name: ocsp-manager
-          image: reccaflames/ocsp-manager:0.1.1
+          image: reccaflames/ocsp-manager:0.1.2
           imagePullPolicy: Always
           resources:
             limits:
@@ -109,9 +109,6 @@ webhooks:
       - v1
       - v1beta1
     sideEffects: None
-    matchConditions:
-      - expression: '("controller.cert-manager.io/fao" in object.metadata.labels)'
-        name: 'select-cert-manager-secrets'
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
