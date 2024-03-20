@@ -90,7 +90,7 @@ func buildStapleUpdateRequest(ocspResponse *[]byte) ([]byte, error) {
 	op := []Operation{
 		{
 			Op:    "add",
-			Path:  "/data/tls.oscp-staple",
+			Path:  "/data/tls.ocsp-staple",
 			Value: base64.StdEncoding.EncodeToString(*ocspResponse),
 		},
 	}
