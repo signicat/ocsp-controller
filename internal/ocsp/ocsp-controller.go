@@ -218,7 +218,7 @@ func (c *OcspController) HandleOcspJob() []error {
 	secrets := getSecrets(client, ISTIO_NAMESPACE)
 	var errors []error
 	for _, s := range secrets.Items {
-		ocspResponse := c.HandleSecretMutation(s)
+		ocspResponse := c.HandleSecretMutation(s, false)
 		if ocspResponse == nil {
 			c.logger.Error(fmt.Sprintf(`ocsp response for secret %v not available`, s.Name))
 			errors = append(errors, fmt.Errorf(`ocsp response for secret %v not available`, s.Name))
@@ -244,9 +244,12 @@ func allNil(arr []error) bool {
 	return true // All elements are nil
 }
 
-func (c *OcspController) HandleSecretMutation(s v1.Secret) []byte {
+func (c *OcspController) HandleSecretMutation(s v1.Secret, forceFetch bool) []byte {
+	if !forceFetch {
+		forceFetch = false
+	}
 	secretName := s.Namespace + "/" + s.Name
-	c.logger.Info(fmt.Sprintf(`Handling mutation for certificate: %v`, secretName))
+	c.logger.Info(fmt.Sprintf(`Handling mutation for certificate with secret: %v`, secretName))
 
 	certs, err := c.handleCertificateTlsFromSecret(&s)
 	if err != nil {
@@ -266,8 +269,10 @@ func (c *OcspController) HandleSecretMutation(s v1.Secret) []byte {
 		return nil
 	}
 
-	if c.validateStaple(&s, chain[0], now) {
-		return nil
+	if !forceFetch { // Skip Staple Validation
+		if c.validateStaple(&s, chain[0], now) {
+			return nil
+		}
 	}
 
 	if ok, ocspResponse := getOCSPResponse(certs[0], chain[0]); ok {
