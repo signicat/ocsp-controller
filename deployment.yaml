@@ -46,7 +46,7 @@ spec:
       serviceAccountName: ocsp-response-updater-sa
       containers:
         - name: ocsp-manager
-          image: reccaflames/ocsp-manager:0.0.123
+          image: reccaflames/ocsp-manager:0.1.3
           imagePullPolicy: Always
           resources:
             limits:
