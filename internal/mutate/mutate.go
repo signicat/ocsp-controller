@@ -1,6 +1,7 @@
 package mutate
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"golang.org/x/exp/slog"
@@ -46,8 +47,37 @@ func handleSecretMutation(admissionReview *admissionv1.AdmissionReview) ([]byte,
 	}
 	secretName := secret.Namespace + "/" + secret.Name
 
+	inspectUpdateReason(admissionReview, secretName)
+
+	isCertManagerSecret := false
+	for label := range secret.Labels {
+		if label == "controller.cert-manager.io/fao" {
+			isCertManagerSecret = true
+			break
+		}
+	}
+
+	if !isCertManagerSecret {
+		logger.Info(`Returning empty Admission Response. Secret is not associated with certificate managed by cert-manager.`, "secret", secretName)
+		return generateEmptyResponse(admissionReview)
+	}
+
+	oldSecret, secErr := getOldSecret(admissionReview)
+	if secErr != nil {
+		logger.Info("error unmarshalling old secret object")
+
+	}
+
+	forceStaple := true
+	if oldSecret != nil {
+		forceStaple = shouldForceStaple(secret, *oldSecret)
+	}
+	if forceStaple {
+		logger.Info("OCSP response should be force fetched")
+	}
+
 	ocspController := ocsp.NewOcspController()
-	ocspResponse := ocspController.HandleSecretMutation(secret)
+	ocspResponse := ocspController.HandleSecretMutation(secret, forceStaple)
 	if ocspResponse == nil {
 		logger.Info(`Empty OCSP Response. Handling Empty Admission Response`, "secret", secretName)
 		return generateEmptyResponse(admissionReview)
@@ -65,6 +95,63 @@ func handleSecretMutation(admissionReview *admissionv1.AdmissionReview) ([]byte,
 		return nil, fmt.Errorf("error marshalling Secret %v", err)
 	}
 	return responseBytes, nil
+}
+
+func inspectUpdateReason(review *admissionv1.AdmissionReview, secretName string) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	request := review.Request
+
+	switch request.Operation {
+	case "CREATE":
+		logger.Info(fmt.Sprintf("Webhook triggered by a CREATE operation for secret %s", secretName))
+	case "UPDATE":
+		logger.Info(fmt.Sprintf("Webhook triggered by a UPDATE operation %s", secretName))
+	default:
+		logger.Info(fmt.Sprintf("Webhook triggered by an unknown operation for secret %s", secretName))
+	}
+}
+
+func getOldSecret(admissionReview *admissionv1.AdmissionReview) (*v1.Secret, error) {
+	raw := admissionReview.Request.OldObject.Raw
+	secret := &v1.Secret{}
+
+	if err := json.Unmarshal(raw, secret); err != nil {
+		return nil, err
+	}
+
+	return secret, nil
+}
+
+func shouldForceStaple(secret v1.Secret, oldSecret v1.Secret) bool {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	secretName := secret.Namespace + "/" + secret.Name
+	logger.Info("Verifying if TLS or CA changed for a secret", "secret", secretName)
+
+	tls := secret.Data[CERT_TLS]
+	ca := secret.Data[CERT_CA]
+
+	oldTls := oldSecret.Data[CERT_TLS]
+	oldCa := oldSecret.Data[CERT_CA]
+
+	certChanged := false
+	if bytes.Equal(tls, oldTls) {
+		logger.Info("Certificate TLS did not change", "secret", secretName)
+	} else {
+		logger.Info("Certificate TLS changed", "secret", secretName)
+		certChanged = true
+	}
+
+	caChanged := false
+	if bytes.Equal(ca, oldCa) {
+		logger.Info("Certificate CA did not change", "secret", secretName)
+	} else {
+		logger.Info("Certificate CA changed", "secret", secretName)
+		caChanged = true
+	}
+
+	return certChanged || caChanged
 }
 
 func parseAdmissionReview(body []byte) (*admissionv1.AdmissionReview, error) {
@@ -119,3 +206,8 @@ func generatedAdmissionResponse(admissionReview *admissionv1.AdmissionReview, pa
 		PatchType: &patchType,
 	}
 }
+
+const (
+	CERT_TLS = "tls.crt"
+	CERT_CA  = "ca.crt"
+)
